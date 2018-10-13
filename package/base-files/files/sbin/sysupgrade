@@ -15,7 +15,7 @@ cleanup(){ for i in $@;do [ -d "$i" ] && rm -rf "$i" || rm -f "$i";done;}
 unmount(){ for i in $@;do [ -n "$i" ] && mount|grep -q "$i" \
 	&& umount "$i";done;}
 set_logfile(){ while :;do c=$((c+1));log="/var/log/${0##*/}.$c.log"
-	[ -f "$log" ]||break;done;echo "$log";touch "$log";}
+ 	[ -f "$log" ]||break;done;touch "$log";echo "$log";}
 
 # initialize defaults
 export MTD_CONFIG_ARGS=""
@@ -169,7 +169,6 @@ add_overlayfiles() {
 
 #[options]
 CSUM_TOOL="sha256sum"
-DEBUG="/tmp/debug"	#if exist enables debug
 
 #[original files/folders]
 DIR_OPKG="/etc/opkg"
@@ -349,7 +348,13 @@ EOF
 
 count_words(){ local c=0;for i in $1;do c=$((c+1));done;echo $c;}
 
-test_url(){	wget -q -s "$1";return $?;}
+#test_url(){	wget -q -s "$1";return $?;}
+test_url(){
+	local result=`wget -q -s "$1" >/dev/null 2>&1;echo $?`
+	[ $result -eq 0 ] && msg="OK" || msg="FAILED"
+	v "$2${2/*/ }url $msg: '$1'"
+	return $result
+}
 
 get_file_var(){ awk -F\" "/$1/{print \$2}" "$2";}
 
@@ -376,8 +381,8 @@ build_feeds_conf(){
 
 get_upgrade_id(){
 #	stable versions only, no release candidates
-	wget -q -O - $(cat $FILE_SYSUPG_AUTO|grep -o '^.*releases')|\
-	  awk -F"[><]" '/>[0-9][0-9].[0-9][0-9].[0-9]</{v=$7}END{print v}'
+	wget -q -O - `cat "$FILE_SYSUPG_AUTO"|grep -o '^.*releases'` 2>/dev/null|\
+		awk -F"[><]" '/>[0-9][0-9].[0-9][0-9].[0-9]</{v=$7}END{print v}'
 }
 
 get_upgrade_csum(){
@@ -525,7 +530,7 @@ build_cache_dir(){ #version_id or kernel_id
 #	workaround: remove all opkg keys from cache.
 	rm -rf "$DIR_CACHE_KEYS"
 	umount "$FILE_OPKG_CONF" "$DIR_OPKG" "$FILE_OPKG_STATUS"
-#	echo "$DIR_CACHE" > "$FILE_SYSUPG_KEEP"
+
 	return 0
 }
 
@@ -589,21 +594,24 @@ EOF
 }
 
 do_upgrade_available(){
+	v "Checking for updates..."
 	get_vars_current || return 101
-	v "INSTALLED=${VERSION_ID_CURRENT}_${BUILD_ID_CURRENT}"
 	get_vars_upgrade || return 102
-	v "AVAILABLE=${VERSION_ID_UPGRADE}_${BUILD_ID_UPGRADE}"
+	v "installed: ${VERSION_ID_CURRENT}_${BUILD_ID_CURRENT}"
+	v "available: ${VERSION_ID_UPGRADE}_${BUILD_ID_UPGRADE}"
 	[ "$BUILD_ID_UPGRADE" == "$BUILD_ID_CURRENT" ] \
 		&& return 103 \
 		|| return 0		# upgrade available
 }
 
 do_upgrade_auto(){
+	v "Starting auto upgrade process..."
 	[ "$BUILD_ID_UPGRADE" == "$BUILD_ID_CURRENT" ] && return 101
 	case "$URL_SYSUPG_AUTO" in
 		*/releases/*)	local cache_conf="$VERSION_ID_UPGRADE";;
 		*/snapshots/*)	local cache_conf="$KERNEL_ID_UPGRADE";;
 	esac
+	get_app_stats
 	build_cache_dir "$cache_conf" || return 102
 	mkdir -p "$DIR_WORK_GPG";cd "$DIR_WORK_GPG"
 	local csumfile=`get_upgrade_csum`
@@ -615,8 +623,8 @@ do_upgrade_auto(){
 	eval IMAGE="`readlink -vf $datafile`"
 	cd "$DIR_WORK"
 	insert_runonce
-	[ -n "`get_user_apps`" ] && opkg --autoremove remove `get_user_apps`
-	[ -n "`get_user_packages`" ] && opkg remove `get_user_packages`
+#	[ -n "`get_user_apps`" ] && opkg --autoremove remove `get_user_apps`
+#	[ -n "`get_user_packages`" ] && opkg remove `get_user_packages`
 	return 0
 }
 
@@ -638,7 +646,7 @@ get_vars_current(){
 	eval URL_OPKG_DISTFEEDS="`head -1 $FILE_OPKG_DISTFEEDS|cut -d\  -f3`"
 	eval URL_OPKG_DOMAIN=`head -1 "$FILE_OPKG_DISTFEEDS"|\
 		grep -o "[^ ]*:/\+.[^/]*"`
-	test_url "$URL_OPKG_DOMAIN" || return 101
+	test_url "$URL_OPKG_DOMAIN" "package"|| return 101
 	eval URL_VERSION=`awk '/targets.*packages$/{gsub("/targets.*$","");
 		print $3}' "$FILE_OPKG_DISTFEEDS"`
 	eval ARCH=`get_file_var _ARCH "$FILE_OSRELEASE"`;
@@ -651,11 +659,11 @@ get_vars_current(){
 
 get_vars_upgrade(){
 #sysupgrade.auto determines upgrade path
-	[ -r "$FILE_SYSUPG_AUTO" ] || return 101
+	test_url "`get_upgrade_url`" "upgrade" || return 101
 	eval URL_SYSUPG_AUTO=`cat "$FILE_SYSUPG_AUTO"`
 	eval URL_SYSUPG_DOMAIN=`grep -o "[^ ]*:/\+.[^/]*" "$FILE_SYSUPG_AUTO"`
 
-	test_url "$URL_SYSUPG_DOMAIN" || return 102
+#	test_url "$URL_SYSUPG_DOMAIN" || return 102
 	case "$URL_SYSUPG_AUTO" in
 		*/releases/*)
 			eval VERSION_ID_UPGRADE=`get_upgrade_id`
@@ -702,6 +710,7 @@ set_upgrade_url(){ #https requires ustream SSL Library & ca-certificates
 		*/snapshots/*)
 		;;
 		*)
+			v "failed to set upgrade url, not a release or snapshot."
 			[ -r "$FILE_SYSUPG_AUTO" ] && rm -f "$FILE_SYSUPG_AUTO"
 			return 101
 		;;
@@ -712,16 +721,19 @@ set_upgrade_url(){ #https requires ustream SSL Library & ca-certificates
 get_upgrade_url(){
 #	creating a current link on the openwrt server would be much better!
 #	eg: http://downloads.openwrt.org/current/targets/....
+	[ -r "$FILE_SYSUPG_AUTO" ] || return 101
 	local url="`cat $FILE_SYSUPG_AUTO`"
 	case "$url" in
 		*/releases/*)
 			v=`get_upgrade_id`
-			url=`sed "s,/releases,&/$v,;s,openwrt-,&$v-," $FILE_SYSUPG_AUTO`
+			[ -n "$v" ] || return 102
+			url=`sed "s,/releases,&/$v,;s,openwrt-,&$v-," \
+				$FILE_SYSUPG_AUTO`
 		;;
 		*/snapshots/*)
 		;;
 		*)
-			return 102 #everything else
+			return 103 #everything else
 		;;
 	esac
 	echo "$url"
@@ -813,23 +825,18 @@ do_save_conffiles() {
 }
 
 if [ -n "$UPGRADE_URL" ]; then
-	[ "$UPGRADE_URL" != "TESTONLY" ] && set_upgrade_url "$UPGRADE_URL"
-	[ -r "$FILE_SYSUPG_AUTO" ] && test_url `get_upgrade_url`
-	[ $? -eq 0 ] \
-		&& v "$FILE_SYSUPG_AUTO: ok" \
-		|| v "$FILE_SYSUPG_AUTO: error"
+	[ "$UPGRADE_URL" != "TESTONLY" ] \
+		&& set_upgrade_url "$UPGRADE_URL"
+	test_url "`get_upgrade_url`" "upgrade"
 	exit $?
 fi
 
 if [ $UPGRADE_AVAILABLE -eq 1 ]; then
-	v "Checking for updates..."
 	do_upgrade_available ; exit $?
 fi
 
 if [ $UPGRADE_AUTO -eq 1 ]; then
-	v "Checking for updates..."
-	do_upgrade_available || exit 1
-	v "Starting auto upgrade process..."
+	do_upgrade_available ||	exit 1
 	do_upgrade_auto || exit 1
 fi
 
