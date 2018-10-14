@@ -176,7 +176,7 @@ DIR_OPKG_KEYS="/etc/opkg/keys"
 DIR_OPKG_LISTS="/var/opkg-lists"
 FILE_OPKG_CONF="/etc/opkg.conf"
 FILE_OPKG_DISTFEEDS="/etc/opkg/distfeeds.conf"
-FILE_OPKG_CUSTOMFEEDS="/tmp/opkg/customfeeds.conf"
+FILE_OPKG_CUSTOMFEEDS="/etc/opkg/customfeeds.conf"
 FILE_OPKG_STATUS="/usr/lib/opkg/status"
 FILE_OSRELEASE="/etc/os-release"
 
@@ -427,7 +427,7 @@ gpg_verify(){ # gpgdir sigfile datafile
 	#converts from ASCII-armored to binary
 	for i in "$1"/*.asc;do
 		sed -ne '/^$/ { n; :r; p; n; s/^[=-]//; T r }' "$i"
-	done | $base64 -d > "$keyring"
+	done | "$base64" -d > "$keyring"
 	"$gpgv" --keyring "$keyring" "$2" "$3"
 }
 
@@ -482,9 +482,9 @@ build_cache_dir(){ #version_id or kernel_id
 	df / > "$FILE_CACHE_DISKUSAGE"
 	sed "s,$DIR_OPKG_LISTS,$DIR_CACHE_LISTS,g" "$FILE_OPKG_CONF"\
 		> "$FILE_CACHE_CONF"
-	touch "$FILE_CACHE_CUSTOMFEEDS"
+	touch cp "$FILE_OPKG_CUSTOMFEEDS" "$FILE_CACHE_CUSTOMFEEDS"
 	sed -i "s/$VERSION_ID_CURRENT/$1/g" "$FILE_CACHE_CUSTOMFEEDS"
-	cp $FILE_OPKG_DISTFEEDS "$FILE_CACHE_DISTFEEDS"
+	cp "$FILE_OPKG_DISTFEEDS" "$FILE_CACHE_DISTFEEDS"
 	cp -r "$DIR_OPKG_KEYS" "$DIR_CACHE"
 
 	mount -o bind "$FILE_CACHE_CONF" "$FILE_OPKG_CONF" || return 102
@@ -523,7 +523,8 @@ build_cache_dir(){ #version_id or kernel_id
 #	workaround: opkg queries /usr/lib/opkg/status for candidates ?!
 	touch "$DIR_TEMP/status"
 	mount -o bind "$DIR_TEMP/status" "$FILE_OPKG_STATUS"
-	opkg $OPKG_V download $user_apps $depends || return 106 #download fail
+ 	depends="$depends ip-tiny"
+	opkg $OPKG_V download $user_apps $depends || return 106
 	cd "$DIR_WORK"
 	echo "option cache $DIR_CACHE_PKGS" >> "$FILE_CACHE_CONF"
 
@@ -537,13 +538,14 @@ build_cache_dir(){ #version_id or kernel_id
 insert_runonce(){
 	local kmsg=/dev/kmsg
 	eval FILE_SYSUPG_POST_LOG="`set_logfile`"
+	[ "${-/x}" == "$-" ] || local debug="set -x"
 #file:1
 	cat <<EOF > "$FILE_SYSUPG_INIT"
 #!/bin/sh /etc/rc.common
 
 START=`echo $LINK_SYSUPG_RC|grep -Eo '[0-9]*'` #greps number from filename
 boot() {
-  ( #set -vx
+  ( $debug
 	[ -d "$DIR_CACHE" ] || { echo "error: $DIR_CACHE not found." && exit 1;}
 	echo "continuing sysupgrade..." > $kmsg
 	df / |tee $kmsg
@@ -622,9 +624,8 @@ do_upgrade_auto(){
 	grep "$datafile" "$csumfile"|"$CSUM_TOOL" -c || return 104
 	eval IMAGE="`readlink -vf $datafile`"
 	cd "$DIR_WORK"
+	[ $TEST -eq 0 ] || return 105
 	insert_runonce
-#	[ -n "`get_user_apps`" ] && opkg --autoremove remove `get_user_apps`
-#	[ -n "`get_user_packages`" ] && opkg remove `get_user_packages`
 	return 0
 }
 
@@ -635,8 +636,6 @@ get_app_stats(){
 	local uac=`count_words "$user_apps"`
 	v "Found $uac user app(s) and $((upc-uac)) dependency package(s)";
 	echo "$user_apps"|sed 's/ /\n/g'|sort|xargs
-#	echo "$user_packages"|sed 's/ /\n/g'|sort|xargs
-#	get_dependencies "$user_apps"
 }
 
 get_vars_current(){
@@ -764,7 +763,7 @@ do_restore_packages(){
 	[ $appcount -eq 0 ] && return 0
 	[ -n "$conf" ] || {
 		v "Skipping cached package restore:";v ""
-		v "expected version: ${restore_id:='not found'}"
+		v "expected version: ${restore_id:-'not found'}"
 		v " current version: $version_id";v ""
 		v "Trying feeds in $FILE_CACHE_DISTFEEDS:"
 		is_feed_up "$FILE_CACHE_DISTFEEDS" \
