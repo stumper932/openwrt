@@ -5,6 +5,7 @@
 
 # set trap for cleanup
 trap '
+  cd "$DIR_PWD"
 	unmount "$FILE_OPKG_CONF" "$DIR_OPKG" "$FILE_OPKG_STATUS"
 	cleanup "$CONFFILES"
 	[ $UPGRADE_AUTO -eq 0 ] && cleanup "$DIR_WORK"
@@ -54,7 +55,7 @@ while [ -n "$1" ]; do
 		-b|--create-backup) export CONF_BACKUP="$2" NEED_IMAGE=1; shift;;
 		-r|--restore-backup) export CONF_RESTORE="$2" NEED_IMAGE=1; shift;;
 		-l|--list-backup) export CONF_BACKUP_LIST=1; break;;
-		-k|--list-packages) export PACKAGE_LIST=1; break;;
+		-k|--list-apps) export PACKAGE_LIST=1; break;;
 		-f) export CONF_IMAGE="$2"; shift;;
 		-F|--force) export FORCE=1;;
 		-U) export UPGRADE_URL="${2:-TESTONLY}"; break;;
@@ -114,8 +115,8 @@ backup-command:
 	-l | --list-backup
 	             list the files that would be backed up when calling
 	             sysupgrade -b. Does not create a backup file.
-	-k | --list-packages
-	             list custom installed packages.
+	-k | --list-apps
+	             list custom installed apps.
 
 EOF
 	exit 1
@@ -182,6 +183,7 @@ add_overlayfiles() {
 CSUM_TOOL="sha256sum"
 
 #[original files/folders]
+DIR_PWD="$PWD"
 DIR_OPKG="/etc/opkg"
 DIR_OPKG_KEYS="/etc/opkg/keys"
 DIR_OPKG_LISTS="/var/opkg-lists"
@@ -361,7 +363,7 @@ count_words(){ local c=0;for i in $1;do c=$((c+1));done;echo $c;}
 
 #test_url(){	wget -q -s "$1";return $?;}
 test_url(){
-	local result=`wget -q -s "$1" >/dev/null 2>&1;echo $?`
+	local result=`wget -q -s "$1" &>/dev/null;echo $?`
 	[ $result -eq 0 ] && msg="OK" || msg="FAILED"
 	v "$2${2/*/ }url $msg: '$1'"
 	return $result
@@ -393,7 +395,7 @@ build_feeds_conf(){
 get_upgrade_id(){
 #	stable versions only, no release candidates
 	wget -q -O - `cat "$FILE_SYSUPG_AUTO"|grep -o '^.*releases'` 2>/dev/null|\
-		awk -F"[><]" '/>[0-9][0-9].[0-9][0-9].[0-9]</{v=$7}END{print v}'
+		awk '{RS=">|<"}/^[0-9\.]{7}$/{v=$0}END{print v}'
 }
 
 get_upgrade_csum(){
@@ -537,7 +539,7 @@ build_cache_dir(){ #version_id or kernel_id
 #	workaround: package ip defaults to ip-full: ip-tiny is missing.
 	depends="$depends ip-tiny"
 	opkg $OPKG_V download $user_apps $depends || return 106
-	cd "$DIR_WORK"
+	cd "$DIR_PWD"
 	echo "option cache $DIR_CACHE_PKGS" >> "$FILE_CACHE_CONF"
 
 #	workaround: remove all opkg keys from cache.
@@ -635,7 +637,7 @@ do_upgrade_auto(){
 	datafile="${URL_UPGRADE_IMAGE##*/}"
 	grep "$datafile" "$csumfile"|"$CSUM_TOOL" -c || return 104
 	eval ARGV="`readlink -vf $datafile`"
-	cd "$DIR_WORK"
+	cd "$DIR_PWD"
 	[ $TEST -eq 0 ] || return 105
 	insert_runonce
 	return 0
@@ -942,3 +944,4 @@ if [ -n "$(rootfs_type)" ]; then
 else
 	do_upgrade
 fi
+
