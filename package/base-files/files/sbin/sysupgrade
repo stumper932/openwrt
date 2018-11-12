@@ -582,8 +582,14 @@ boot() {
 		echo "package restore error, check systemlog" > $kmsg
 		rm -f "$LINK_SYSUPG_RC"
 	}
-  /etc/init.d/dropbear stop;sleep 3;/etc/init.d/dropbear start
-  /etc/init.d/sshd stop;sleep 3;/etc/init.d/sshd start
+  #workaround: ssh not available after package installation
+  [ -f "/etc/init.d/dropbear" ] && "/etc/init.d/dropbear" restart
+  [ -f "/etc/init.d/sshd" ] && "/etc/init.d/sshd" restart
+  
+  #workaround: if distfeeds https preupgrade , then reapply it.
+  case "$URL_OPKG_DISTFEEDS" in https://*)
+    sed -i 's,http:,https:,' "$FILE_OPKG_DISTFEEDS";;
+  esac
   ) 2>&1 | tee $FILE_SYSUPG_POST_LOG
 }
 
