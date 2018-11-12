@@ -5,6 +5,7 @@
 
 # set trap for cleanup
 trap '
+  cd "$DIR_CUR"
 	unmount "$FILE_OPKG_CONF" "$DIR_OPKG" "$FILE_OPKG_STATUS"
  	cleanup "$CONFFILES"
  	[ $UPGRADE_AUTO -eq 0 ] && cleanup "$DIR_WORK"
@@ -186,6 +187,7 @@ FILE_SYSUPG_KEEP="/lib/upgrade/keep.d/sysupgrade"
 DIR_GPG_KEYS="/etc/gpg/keys"
 
 #[temporary files/folders]
+DIR_CUR="$PWD"
 DIR_WORK="`mktemp -d -t XXXXXX`" #provides easy deploy & cleanup
 FILE_SYSUPG_PRE_LOG="`set_logfile`"
 FILE_SYSUPG_INIT="/etc/init.d/sysupgrade"
@@ -527,7 +529,7 @@ build_cache_dir(){ #version_id or kernel_id
 	depends="$depends ip-tiny"
 	opkg $OPKG_V download $user_apps $depends || return 106
 
-	cd "$DIR_WORK"
+	cd "$DIR_CUR"
 	echo "option cache $DIR_CACHE_PKGS" >> "$FILE_CACHE_CONF"
 
 #	workaround: remove all opkg keys from cache.
@@ -582,6 +584,8 @@ boot() {
 		echo "package restore error, check systemlog" > $kmsg
 		rm -f "$LINK_SYSUPG_RC"
 	}
+  /etc/init.d/dropbear stop;sleep 3;/etc/init.d/dropbear start
+  /etc/init.d/sshd stop;sleep 3;/etc/init.d/sshd start
   ) 2>&1 | tee $FILE_SYSUPG_POST_LOG
 }
 
@@ -625,7 +629,7 @@ do_upgrade_auto(){
 	datafile="${URL_UPGRADE_IMAGE##*/}"
 	grep "$datafile" "$csumfile"|"$CSUM_TOOL" -c || return 104
 	eval IMAGE="`readlink -vf $datafile`"
-	cd "$DIR_WORK"
+	cd "$DIR_CUR"
 	[ $TEST -eq 0 ] || return 105
 	insert_runonce
 	return 0
