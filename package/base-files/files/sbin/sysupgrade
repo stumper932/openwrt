@@ -168,8 +168,9 @@ add_overlayfiles() {
 
 ##########################################################################
 
-#[options]
-CSUM_TOOL="sha256sum"
+#[tools]
+TOOL_CSUM="sha256sum"
+TOOL_WGET="uclient-fetch"
 
 #[original files/folders]
 DIR_OPKG="/etc/opkg"
@@ -351,7 +352,7 @@ count_words(){ local c=0;for i in $1;do c=$((c+1));done;echo $c;}
 
 #test_url(){	wget -q -s "$1";return $?;}
 test_url(){
-	local result=`wget -q -s "$1" >/dev/null 2>&1;echo $?`
+	local result=`$TOOL_WGET -q -s "$1" >/dev/null 2>&1;echo $?`
 	[ $result -eq 0 ] && msg="OK" || msg="FAILED"
 	v "$2${2/*/ }url $msg: '$1'"
 	return $result
@@ -382,15 +383,16 @@ build_feeds_conf(){
 
 get_upgrade_id(){
 #	stable versions only, no release candidates
-	wget -q -O - `cat "$FILE_SYSUPG_AUTO"|grep -o '^.*releases'` 2>/dev/null|\
+	$TOOL_WGET -q -O - `cat "$FILE_SYSUPG_AUTO"|\
+    grep -o '^.*releases'` 2>/dev/null|\
 		awk -F"[><]" '/>[0-9][0-9].[0-9][0-9].[0-9]</{v=$7}END{print v}'
 }
 
 get_upgrade_csum(){
-	local sumfile="$URL_BOARD/${CSUM_TOOL}s"
+	local sumfile="$URL_BOARD/${TOOL_CSUM}s"
 	local gpgfile="$sumfile.asc"
-	wget -q "$sumfile" -P "$DIR_WORK_GPG" 2>/dev/null || return 101
-	wget -q "$gpgfile" -P "$DIR_WORK_GPG" 2>/dev/null || return 102
+	$TOOL_WGET -q "$sumfile" -P "$DIR_WORK_GPG" 2>/dev/null || return 101
+	$TOOL_WGET -q "$gpgfile" -P "$DIR_WORK_GPG" 2>/dev/null || return 102
 	echo "$DIR_WORK_GPG/${sumfile##*/}"
 	return 0
 }
@@ -493,18 +495,18 @@ build_cache_dir(){ #version_id or kernel_id
 
 	[ "$VERSION_ID_CURRENT" != "$1" ] && {
 #		workaround: if different version, then get matching keys.
-		keyring=`wget -q -O - "$URL_PACKAGES_UPGRADE/base"|\
+		keyring=`$TOOL_WGET -q -O - "$URL_PACKAGES_UPGRADE/base"|\
 			awk 'BEGIN{RS="\""};/-keyring_.*ipk$/{print}'|tail -1`
-		wget -q -O - "$URL_PACKAGES_UPGRADE/base/$keyring"|\
+		$TOOL_WGET -q -O - "$URL_PACKAGES_UPGRADE/base/$keyring"|\
 			tar zxf - "./data.tar.gz" -O |tar zxf - ".$DIR_OPKG_KEYS" -C /
 		build_feeds_conf "$1"|tee "$FILE_CACHE_DISTFEEDS"
 
 #		workaround: check availability, get all or abort
 		local i query needed available
 		query=`echo 'BEGIN{RS="\""};/^'${user_apps// /_/;/^}'_/'`
-		for i in `wget -q "$URL_PACKAGES_UPGRADE/feeds.conf" -O -|\
+		for i in `$TOOL_WGET -q "$URL_PACKAGES_UPGRADE/feeds.conf" -O -|\
 			awk '{print $2}'`;do
-				wget -q "$URL_PACKAGES_UPGRADE/$i" -O -
+				$TOOL_WGET -q "$URL_PACKAGES_UPGRADE/$i" -O -
 		done|awk "$query" |sort > "$FILE_CACHE_PKGLIST.available"
 		needed=`count_words "$user_apps"`
 		available=`cat "$FILE_CACHE_PKGLIST.available"|wc -l`
@@ -633,9 +635,9 @@ do_upgrade_auto(){
 	local csumfile=`get_upgrade_csum`
 	insert_gpg_keys #remove when added to openwrt-keyring
 	gpg_verify "$DIR_GPG_KEYS" "$csumfile.asc" "$csumfile" || return 103
-	wget "$URL_UPGRADE_IMAGE" -P "$DIR_WORK_GPG";cd "$DIR_WORK_GPG"
+	$TOOL_WGET "$URL_UPGRADE_IMAGE" -P "$DIR_WORK_GPG";cd "$DIR_WORK_GPG"
 	datafile="${URL_UPGRADE_IMAGE##*/}"
-	grep "$datafile" "$csumfile"|"$CSUM_TOOL" -c || return 104
+	grep "$datafile" "$csumfile"|"$TOOL_CSUM" -c || return 104
 	eval IMAGE="`readlink -vf $datafile`"
 	cd "$DIR_CUR"
 	[ $TEST -eq 0 ] || return 105
@@ -700,11 +702,11 @@ get_vars_upgrade(){
 	eval BOARD=`get_file_var _BOARD "$FILE_OSRELEASE"`;
 	eval URL_BOARD="$URL_UPGRADE/targets/$BOARD"
 
-	upgrade_manifest=`wget -q -O - "$URL_BOARD"|\
+	upgrade_manifest=`$TOOL_WGET -q -O - "$URL_BOARD"|\
 		    sed -n 's/.*href="\([^"]*\).*/\1/;/manifest/p'`
 	eval URL_UPGRADE_MANIFEST="$URL_BOARD/$upgrade_manifest"
 	eval FILE_UPGRADE_MANIFEST="$DIR_WORK/upgrade.manifest"
-	wget -q -O "$FILE_UPGRADE_MANIFEST" "$URL_UPGRADE_MANIFEST"
+	$TOOL_WGET -q -O "$FILE_UPGRADE_MANIFEST" "$URL_UPGRADE_MANIFEST"
 
 	eval BUILD_ID_UPGRADE=`awk \
 		'BEGIN{FS="-"};/base-files/{print $(NF-1)"-"$NF}'\
@@ -897,7 +899,7 @@ type platform_check_image >/dev/null 2>/dev/null || {
 
 case "$IMAGE" in
 	http://*)
-		wget -O/tmp/sysupgrade.img "$IMAGE"
+		$TOOL_WGET -O/tmp/sysupgrade.img "$IMAGE"
 		IMAGE=/tmp/sysupgrade.img
 		;;
 esac
