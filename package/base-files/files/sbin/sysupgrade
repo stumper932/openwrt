@@ -189,7 +189,6 @@ DIR_GPG_KEYS="/etc/gpg/keys"
 #[temporary files/folders]
 DIR_CUR="$PWD"
 DIR_WORK="`mktemp -d -t XXXXXX`" #provides easy deploy & cleanup
-FILE_SYSUPG_PRE_LOG="`set_logfile`"
 FILE_SYSUPG_INIT="/etc/init.d/sysupgrade"
 LINK_SYSUPG_RC="/etc/rc.d/S96sysupgrade"
 
@@ -628,6 +627,7 @@ do_upgrade_auto(){
 		*/snapshots/*)	local cache_conf="$KERNEL_ID_UPGRADE";;
 	esac
 	get_app_stats
+	v "Building package cache..."
 	build_cache_dir "$cache_conf" || return 102
 	mkdir -p "$DIR_WORK_GPG";cd "$DIR_WORK_GPG"
 	local csumfile=`get_upgrade_csum`
@@ -799,6 +799,7 @@ do_log(){
 }
 
 #log
+FILE_SYSUPG_PRE_LOG="`set_logfile`"
 do_log
 
 ##########################################################################
